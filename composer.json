@@ -22,7 +22,7 @@
 	},
   	"extra": {
     		"map": [
-      			["Client.php", "lib/credis/Client.php"]
+      			[".", "lib/Credis"]
     		]
   	}
 }
