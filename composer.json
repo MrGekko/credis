@@ -1,6 +1,6 @@
 {
-	"name": "colinmollenhour/credis",
-	"type": "library",
+	"name": "mrgekko/credis",
+	"type": "magento-module",
 	"description": "Credis is a lightweight interface to the Redis key-value store which wraps the phpredis library when available for better performance.",
 	"homepage": "https://github.com/colinmollenhour/credis",
 	"license": "MIT",
@@ -19,5 +19,11 @@
 			"Cluster.php",
             "Sentinel.php"
 		]
-	}
+	},
+  "extra": {
+    "map": [
+      ["Client.php", "lib/credis/Client.php"]
+    ]
+  }
 }
+
