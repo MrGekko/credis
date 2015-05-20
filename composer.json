@@ -20,10 +20,10 @@
             "Sentinel.php"
 		]
 	},
-  "extra": {
-    "map": [
-      ["Client.php", "lib/credis/Client.php"]
-    ]
-  }
+  	"extra": {
+    		"map": [
+      			["Client.php", "lib/credis/Client.php"]
+    		]
+  	}
 }
 
