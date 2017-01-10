@@ -50,8 +50,10 @@ class CredisException extends Exception
  * @method array         exec()
  * @method string        flushAll()
  * @method string        flushDb()
- * @method array         info()
+ * @method array         info(string $section)
  * @method bool|array    config(string $setGet, string $key, string $value = null)
+ * @method array         role()
+ * @method array         time()
  *
  * Keys:
  * @method int           del(string $key)
@@ -136,7 +138,12 @@ class CredisException extends Exception
  * @method int           rPushX(string $key, mixed $value)
  *
  * Sorted Sets:
- * @method array         zrangebyscore(string $key, mixed $start, mixed $stop, array $args = null)
+ * @method int           zCard(string $key)
+ * @method array         zRangeByScore(string $key, mixed $start, mixed $stop, array $args = null)
+ * @method array         zRevRangeByScore(string $key, mixed $start, mixed $stop, array $args = null)
+ * @method int           zRemRangeByScore(string $key, mixed $start, mixed $stop)
+ * @method array         zRange(string $key, mixed $start, mixed $stop, array $args = null)
+ * @method array         zRevRange(string $key, mixed $start, mixed $stop, array $args = null)
  * TODO
  *
  * Pub/Sub
@@ -418,10 +425,8 @@ class Credis_Client {
             $remote_socket = $this->port === NULL
                 ? 'unix://'.$this->host
                 : 'tcp://'.$this->host.':'.$this->port;
-            if ($this->persistent) {
-                if ($this->port === NULL) { // Unix socket
-                    throw new CredisException('Persistent connections to UNIX sockets are not supported in standalone mode.');
-                }
+            if ($this->persistent && $this->port !== NULL) {
+                // Persistent connections to UNIX sockets are not supported
                 $remote_socket .= '/'.$this->persistent;
                 $flags = $flags | STREAM_CLIENT_PERSISTENT;
             }
@@ -444,7 +449,7 @@ class Credis_Client {
             }
             $failures = $this->connectFailures;
             $this->connectFailures = 0;
-            throw new CredisException("Connection to Redis failed after $failures failures." . (isset($errno) && isset($errstr) ? "Last Error : ({$errno}) {$errstr}" : ""));
+            throw new CredisException("Connection to Redis {$this->host}:{$this->port} failed after $failures failures." . (isset($errno) && isset($errstr) ? "Last Error : ({$errno}) {$errstr}" : ""));
         }
 
         $this->connectFailures = 0;
@@ -628,36 +633,39 @@ class Credis_Client {
     }
 
     /**
+	 * @param int $Iterator
+	 * @param string $field
+	 * @param string $pattern
+	 * @param int $count
+	 * @return bool | Array
+	 */
+	public function hscan(&$Iterator, $field, $pattern = null, $count = null)
+	{
+		return $this->__call('hscan', array($field, &$Iterator, $pattern, $count));
+	}
+    
+    /**
      * @param int $Iterator
+     * @param string $field
      * @param string $pattern
      * @param int $Iterator
      * @return bool | Array
      */    
-    public function hscan(&$Iterator, $pattern = null, $count = null)
+    public function sscan(&$Iterator, $field, $pattern = null, $count = null)
     {
-        return $this->__call('hscan', array(&$Iterator, $pattern, $count));
+        return $this->__call('sscan', array($field, &$Iterator, $pattern, $count));
     }
     
     /**
      * @param int $Iterator
+     * @param string $field
      * @param string $pattern
      * @param int $Iterator
      * @return bool | Array
      */    
-    public function sscan(&$Iterator, $pattern = null, $count = null)
+    public function zscan(&$Iterator, $field, $pattern = null, $count = null)
     {
-        return $this->__call('sscan', array(&$Iterator, $pattern, $count));
-    }
-    
-    /**
-     * @param int $Iterator
-     * @param string $pattern
-     * @param int $Iterator
-     * @return bool | Array
-     */    
-    public function zscan(&$Iterator, $pattern = null, $count = null)
-    {
-        return $this->__call('zscan', array(&$Iterator, $pattern, $count));
+        return $this->__call('zscan', array($field, &$Iterator, $pattern, $count));
     }
 
     /**
@@ -804,9 +812,6 @@ class Credis_Client {
                     }
                     break;
                 case 'scan':
-                case 'sscan':
-                case 'hscan':
-                case 'zscan':
                     $ref =& $args[0];
                     if (empty($ref))
                     {
@@ -825,14 +830,38 @@ class Credis_Client {
                     }
                     $args = $eArgs;
                     break;
+                case 'sscan':
+                case 'zscan':
+                case 'hscan':
+					$ref =& $args[1];
+					if (empty($ref))
+					{
+						$ref = 0;
+					}
+					$eArgs = array($args[0],$ref);
+					if (!empty($args[2]))
+					{
+						$eArgs[] = 'MATCH';
+						$eArgs[] = $args[2];
+					}
+					if (!empty($args[3]))
+					{
+						$eArgs[] = 'COUNT';
+						$eArgs[] = $args[4];
+					}
+					$args = $eArgs;
+					break;
                 case 'zrangebyscore':
+                case 'zrevrangebyscore':
+                case 'zrange':
+                case 'zrevrange':
                     if (isset($args[3]) && is_array($args[3])) {
                         // map options
                         $cArgs = array();
                         if (!empty($args[3]['withscores'])) {
                             $cArgs[] = 'withscores';
                         }
-                        if (array_key_exists('limit', $args[3])) {
+                        if (($name == 'zrangebyscore' || $name == 'zrevrangebyscore') && array_key_exists('limit', $args[3])) {
                             $cArgs[] = array('limit' => $args[3]['limit']);
                         }
                         $args[3] = $cArgs;
@@ -908,15 +937,25 @@ class Credis_Client {
             {
                 case 'scan':
                 case 'sscan':
+                    $ref = array_shift($response);
+                    $response = empty($response[0]) ? array() : $response[0];
+                    break;
                 case 'hscan':
                 case 'zscan':
                     $ref = array_shift($response);
-                    if (empty($ref))
+                    $response = empty($response[0]) ? array() : $response[0];
+                    if (!empty($response) && is_array($response))
                     {
-                        $response = false;
+                        $count  = count($response);
+                        $out    = array();
+                        for($i  = 0;$i < $count;$i+=2){
+                            $out[$response[$i]] = $response[$i+1];
+                        }
+                        $response = $out;
                     }
-                    break;
-                case 'zrangebyscore';
+					break;
+                case 'zrangebyscore':
+                case 'zrevrangebyscore':
                     if (in_array('withscores', $args, true)) {
                         // Map array of values into key=>score list like phpRedis does
                         $item = null;
@@ -966,6 +1005,9 @@ class Credis_Client {
                 case 'hmget':
                 case 'del':
                 case 'zrangebyscore':
+                case 'zrevrangebyscore':
+                case 'zrange':
+                case 'zrevrange':
                     break;
                 case 'mget':
                     if(isset($args[0]) && ! is_array($args[0])) {
@@ -1016,6 +1058,7 @@ class Credis_Client {
                     } else {
                         $this->isMulti = TRUE;
                         $this->redisMulti = call_user_func_array(array($this->redis, $name), $args);
+                        return $this;
                     }
                 }
                 else if($name == 'exec' || $name == 'discard') {
@@ -1136,7 +1179,7 @@ class Credis_Client {
                 $this->connected = FALSE;
                 throw new CredisException('Failed to write entire command to stream');
             }
-            $lastFailed = !!$fwrite;
+            $lastFailed = $fwrite == 0;
         }
     }
 
